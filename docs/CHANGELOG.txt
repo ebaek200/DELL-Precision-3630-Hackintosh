@@ -1,0 +1,65 @@
+================================================================================
+  Hackintosh EFI Update Log
+  Dell Precision 3630 | Xeon E-2136 | RX 5700 XT | macOS Sequoia
+================================================================================
+
+[v2.0] 2026-03-24 - Sequoia 15 Upgrade
+--------------------------------------------------------------------------------
+  BREAKING CHANGES (from v1.0 Ventura):
+  - Target OS: macOS Ventura 13 → macOS Sequoia 15
+  - SecureBootModel: Default → Disabled
+  - csr-active-config: 00000000 → 03080000 (SIP partial for AMFI)
+  - boot-args: added revpatch=sbvmm,f16c (Sequoia VM/CPU check bypass)
+  - APFS MinDate/MinVersion: 0 → -1 (future-proof)
+
+  NEW KEXTS:
+  - CryptexFixup.kext (Sequoia cryptex loading fix)
+  - FeatureUnlock.kext (Sidecar/AirPlay/Continuity)
+
+  UNCHANGED:
+  - All 6 SSDTs (hardware-level, OS-independent)
+  - USBMap.kext (hardware-specific)
+  - SMBIOS iMacPro1,1 (with RestrictEvents sbvmm patch)
+  - download_kexts.sh updated for new kexts
+
+  TODO:
+  - [ ] GenSMBIOS 시리얼 생성
+  - [ ] .dsl → .aml 컴파일
+  - [ ] download_kexts.sh 실행
+  - [ ] Dell BIOS 설정
+  - [ ] Sequoia 설치 USB 생성
+  - [ ] 첫 부팅 + ALC255 alcid 확정
+  - [ ] Broadcom WiFi 동작 확인 (Sequoia에서 OCLP 필요할 수 있음)
+
+[v1.0] 2026-03-24 - Initial Build
+--------------------------------------------------------------------------------
+  - OpenCore config.plist 생성 (iMacPro1,1, 8섹션 완성)
+  - ACPI SSDTs 7개:
+    * SSDT-PLUG.dsl     - CPU 전원관리 (XCPM/SpeedStep/Turbo)
+    * SSDT-EC-USBX.dsl  - Fake EC + USB 전원 속성
+    * SSDT-PMC.dsl      - 네이티브 NVRAM (300시리즈)
+    * SSDT-AWAC.dsl     - RTC 시계 Fix
+    * SSDT-GPRW.dsl     - 잠자기 즉시깨움 Fix (GPE 0x6D)
+    * SSDT-SBUS-MCHC.dsl - SMBus + 칩셋 리포팅
+  - USBMap.kext - 15포트 매핑 (HS01-04,07-10 + SS01-07)
+  - download_kexts.sh - Kext/Driver 자동 다운로드 스크립트
+  - CHECKLIST.txt - BIOS설정 + 설치 + 검증 + 잠자기 + 트러블슈팅
+
+  TODO:
+  - [ ] GenSMBIOS로 시리얼/UUID/MLB 생성 → config.plist PLACEHOLDER 교체
+  - [ ] .dsl → .aml 컴파일 (iasl 필요)
+  - [ ] download_kexts.sh 실행 → kext/driver 다운로드
+  - [ ] Dell BIOS 설정 변경 (CHECKLIST Part 1)
+  - [ ] CFG Lock 해제 여부 확인 (modGRUBShell)
+  - [ ] Above 4G Decoding 활성화 확인
+  - [ ] 첫 부팅 테스트
+  - [ ] ALC255 alcid 값 확정 (11 → 3/13/17/27/28 시도)
+  - [ ] USB 포트 실측 매핑 (Hackintool로 재확인)
+
+--------------------------------------------------------------------------------
+  업데이트 방법:
+  1. 변경 전: backup/vX.X_날짜/ 에 현재 상태 백업
+  2. 수정 작업
+  3. 이 파일에 변경 내역 추가
+  4. 테스트 후 안정 확인
+================================================================================

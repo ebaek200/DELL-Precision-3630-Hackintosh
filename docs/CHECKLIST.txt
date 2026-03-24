@@ -1,0 +1,919 @@
+================================================================================
+  HACKINTOSH CHECKLIST
+  Dell Precision 3630 | Xeon E-2136 | RX 5700 XT | macOS Sequoia 15
+================================================================================
+
+
+================================================================================
+  PART 1: DELL BIOS SETTINGS (Press F2 at boot)
+================================================================================
+
+  GENERAL
+  --------------------------------------------------------------------------
+  [ ] General > Boot Sequence ................... UEFI (not Legacy)
+  [ ] General > Boot List Option ................ UEFI
+  [ ] General > Advanced Boot Options >
+        Enable Legacy Option ROMs ............... Disabled
+  [ ] General > Advanced Boot Options >
+        Enable UEFI Network Stack ............... OFF
+
+  SYSTEM CONFIGURATION
+  --------------------------------------------------------------------------
+  [ ] System Configuration > SATA Operation ..... AHCI
+        (WARNING: Changing from RAID to AHCI will break existing Windows
+         installs unless you pre-configure Windows Safe Mode boot first)
+  [ ] System Configuration > USB Configuration >
+        Enable USB Boot Support ................. Enabled
+  [ ] System Configuration > Audio .............. Enabled
+  [ ] System Configuration > Thunderbolt
+        BIOS Assist Mode ........................ Disabled
+  [ ] System Configuration > Thunderbolt
+        Security Level .......................... No Security (if present)
+
+  SECURITY
+  --------------------------------------------------------------------------
+  [ ] Security > TPM 2.0 Security ............... TPM Off / Disabled
+  [ ] Security > Chassis Intrusion .............. Disabled (or Silenced)
+  [ ] Security > CPU XD Support ................. Enabled
+  [ ] Security > Admin Setup Lockout ............ Disabled
+
+  SECURE BOOT
+  --------------------------------------------------------------------------
+  [ ] Secure Boot > Secure Boot Enable .......... Disabled
+        (CRITICAL - OpenCore will not boot with Secure Boot on)
+
+  VIRTUALIZATION
+  --------------------------------------------------------------------------
+  [ ] Virtualization Support >
+        Virtualization (VT-x) ................... Enabled
+  [ ] Virtualization Support >
+        VT for Direct I/O (VT-d) ................ Disabled
+        (Alternative: leave Enabled and use DisableIoMapper quirk in
+         config.plist. Disabling in BIOS is simpler and more reliable.)
+
+  INTEL SOFTWARE GUARD EXTENSIONS
+  --------------------------------------------------------------------------
+  [ ] Intel SGX > Intel SGX Enable .............. Disabled
+        (SGX causes issues with macOS and is not needed)
+
+  PERFORMANCE
+  --------------------------------------------------------------------------
+  [ ] Performance > Multi-Core Support .......... All Cores
+  [ ] Performance > Intel SpeedStep ............. Enabled
+  [ ] Performance > C-States Control ............ Enabled
+  [ ] Performance > Intel TurboBoost ............ Enabled
+  [ ] Performance > HyperThread Control ......... Enabled
+
+  POWER MANAGEMENT
+  --------------------------------------------------------------------------
+  [ ] Power Management > Wake on LAN/WLAN ....... Disabled
+        (Prevents random wakes from sleep)
+  [ ] Power Management > USB Wake Support ....... Disabled
+        (Enable only if you want keyboard/mouse to wake)
+  [ ] Power Management > Block Sleep ............ Disabled (allow sleep)
+  [ ] Power Management > AC Recovery ............ Power Off
+
+  ADVANCED (may require Dell-specific unlock or GRUB shell)
+  --------------------------------------------------------------------------
+  [ ] Above 4G Decoding ........................ Enabled
+        (CRITICAL for RX 5700 XT - the GPU needs 64-bit BAR access)
+        NOTE: On Dell 3630, this may be hidden. If not accessible:
+        - Use modified GRUB shell (modGRUBShell.efi) from USB
+        - Or use ControlMsrE2 from OpenCore Tools
+        - setup_var 0x802 0x01   (value varies by BIOS version)
+
+  [ ] CFG Lock (MSR 0xE2) ...................... Disabled
+        NOTE: Dell often hides this setting. To check/modify:
+        1. Boot modGRUBShell.efi from OpenCore Tools
+        2. setup_var 0x5BD 0x00   (offset varies - extract with UEFITool)
+        3. If you CANNOT unlock CFG Lock, set these in config.plist:
+           Kernel > Quirks > AppleXcpmCfgLock = YES
+           UEFI > Quirks > IgnoreInvalidFlexRatio = YES
+        4. Verify with VerifyMsrE2.efi from OpenCore Tools
+
+  [ ] Resize BAR Support ....................... Disabled
+        (If present - conflicts with macOS, Above 4G is what we need)
+
+  FINAL BIOS STEP
+  --------------------------------------------------------------------------
+  [ ] Save and Exit (Apply Changes)
+  [ ] Confirm boot order: USB first for installation
+
+
+================================================================================
+  PART 2: EFI INSTALLATION STEPS
+================================================================================
+
+  IMPORTANT: macOS Sequoia 15 requires OpenCore 1.0.2 or newer.
+  Older OpenCore versions will fail to boot the Sequoia installer.
+  Verify your OpenCore version before proceeding.
+
+  STEP 1: PREPARE USB DRIVE
+  --------------------------------------------------------------------------
+  [ ] Use a USB drive >= 16GB
+  [ ] Format USB as FAT32 with GPT partition scheme:
+        - Windows: Use Rufus (GPT, FAT32, non-bootable)
+        - macOS:   diskutil eraseDisk FAT32 HACKUSB GPTFormat /dev/diskX
+        - Linux:   gdisk + mkfs.vfat -F 32
+
+  STEP 2: CREATE macOS SEQUOIA INSTALLER
+  --------------------------------------------------------------------------
+  [ ] Download macOS Sequoia 15 from the App Store or via gibMacOS
+  [ ] Create the bootable installer:
+        sudo /Applications/Install\ macOS\ Sequoia.app/Contents/Resources/\
+        createinstallmedia --volume /Volumes/HACKUSB --nointeraction
+  [ ] Wait for the process to complete (may take 20-40 minutes)
+
+  STEP 3: DOWNLOAD KEXTS
+  --------------------------------------------------------------------------
+  [ ] Run the download script:
+        cd EFI-Dell3630/
+        chmod +x download_kexts.sh
+        ./download_kexts.sh
+  [ ] Verify all kexts downloaded to EFI/OC/Kexts/:
+        - Lilu.kext              (base dependency - MUST load first)
+        - VirtualSMC.kext        (SMC emulation)
+        - WhateverGreen.kext     (GPU patching, agdpmod=pikera)
+        - AppleALC.kext          (audio, layout-id)
+        - IntelMausi.kext        (Intel I219-LM ethernet)
+        - USBInjectAll.kext      (USB port discovery, pre-map)
+        - NVMeFix.kext           (NVMe power management + TRIM)
+        - SMCProcessor.kext      (CPU sensor monitoring)
+        - SMCSuperIO.kext        (fan sensor monitoring)
+        - CPUFriend.kext         (CPU power management tuning)
+        - RestrictEvents.kext    (CRITICAL for Sequoia - blocks unsupported
+                                  Mac warnings, enables SMBIOS spoofing.
+                                  Requires revpatch=sbvmm in boot-args.)
+        - XHCI-unsupported.kext  (if needed for USB3 controllers)
+
+  STEP 4: COPY EFI TO USB
+  --------------------------------------------------------------------------
+  [ ] Mount USB EFI partition:
+        - Windows: Use MiniTool Partition Wizard or diskpart
+        - macOS:   sudo diskutil mount /dev/diskXs1
+  [ ] Copy the entire EFI/ folder to the root of the EFI partition
+  [ ] Final USB structure should be:
+        USB (EFI Partition)/
+          EFI/
+            BOOT/
+              BOOTx64.efi
+            OC/
+              ACPI/
+                SSDT-PLUG.aml
+                SSDT-EC.aml
+                SSDT-PMC.aml
+                SSDT-USBX.aml
+                (other compiled .aml files)
+              Drivers/
+                OpenRuntime.efi
+                HfsPlus.efi (or OpenHfsPlus.efi)
+                ResetNvramEntry.efi
+              Kexts/
+                (all .kext bundles)
+              config.plist
+              OpenCore.efi
+
+  STEP 5: GENERATE SMBIOS
+  --------------------------------------------------------------------------
+  [ ] Download GenSMBIOS:
+        https://github.com/corpnewt/GenSMBIOS
+  [ ] Run GenSMBIOS and select option 1 to install macserial
+  [ ] Select option 3 and type: iMacPro1,1
+        (Best match for Xeon E-2136 Coffee Lake with dGPU)
+
+        SEQUOIA NOTE: iMacPro1,1 is officially unsupported by macOS Sequoia.
+        Apple dropped support for this SMBIOS starting in Sequoia 15.
+        RestrictEvents.kext with revpatch=sbvmm in boot-args is REQUIRED
+        to bypass the "unsupported Mac" gating and allow installation and
+        updates. Without it, the Sequoia installer will refuse to proceed.
+
+  [ ] Record the generated values:
+        - Serial .............. (check on Apple Coverage site - must be INVALID)
+        - Board Serial (MLB) .. (also must not be registered)
+        - SmUUID .............. (unique UUID)
+        - ROM ................. (use real MAC address of ethernet port)
+  [ ] Edit config.plist > PlatformInfo > Generic:
+        SystemProductName .... iMacPro1,1
+        SystemSerialNumber ... (your generated serial)
+        MLB .................. (your generated board serial)
+        SystemUUID ........... (your generated SmUUID)
+        ROM .................. (6-byte MAC address, no colons)
+  [ ] VERIFY serial is NOT valid at https://checkcoverage.apple.com/
+        (Should return "unable to check" or "not valid")
+
+  STEP 6: COMPILE DSDT/SSDT FILES
+  --------------------------------------------------------------------------
+  [ ] Install iasl (Intel ACPI compiler):
+        - macOS: brew install acpica
+        - Linux: sudo apt install acpica-tools
+        - Windows: download from https://acpica.org/downloads
+  [ ] Compile all .dsl source files to .aml:
+        cd EFI/OC/ACPI/
+        for f in *.dsl; do iasl "$f"; done
+  [ ] Verify .aml files were created without errors
+  [ ] Remove .dsl source files from ACPI/ (only .aml needed at runtime)
+  [ ] Key SSDTs for this build:
+        - SSDT-PLUG.aml    = CPU power management (plugin-type=1)
+        - SSDT-EC.aml      = Fake Embedded Controller for macOS
+        - SSDT-PMC.aml     = NVRAM support for 300-series chipsets
+        - SSDT-USBX.aml    = USB power properties
+        - SSDT-GPRW.aml    = Instant wake fix (patches _PRW methods)
+
+  STEP 7: FIRST BOOT
+  --------------------------------------------------------------------------
+  [ ] Insert USB, power on, press F12 for one-time boot menu
+  [ ] Select USB UEFI entry
+  [ ] At OpenCore picker, select "Install macOS Sequoia"
+  [ ] If black screen: wait 2-3 minutes (GPU initialization can be slow)
+  [ ] If kernel panic: note the last lines, check Part 6 Troubleshooting
+  [ ] In macOS installer:
+        a. Open Disk Utility (View > Show All Devices)
+        b. Erase target drive: GUID Partition Map, APFS
+        c. Close Disk Utility, proceed with installation
+        d. System will reboot 2-3 times - always pick USB OpenCore
+        e. After reboots, select "macOS Installer" then your drive name
+  [ ] After install completes, boot from USB into macOS Sequoia
+  [ ] Copy EFI from USB to internal drive EFI partition:
+        sudo diskutil mount /dev/disk0s1
+        cp -R /Volumes/USB_EFI/EFI /Volumes/EFI/
+
+  STEP 8: POST-INSTALL SEQUOIA-SPECIFIC TASKS
+  --------------------------------------------------------------------------
+  [ ] Verify RestrictEvents.kext is blocking "unsupported Mac" warnings:
+        - Open System Settings > General > Software Update
+        - Sequoia updates should appear normally
+        - No "This Mac is not supported" banners should be visible
+  [ ] Confirm revpatch=sbvmm is active:
+        nvram boot-args
+        (Should contain revpatch=sbvmm in the output)
+  [ ] If you see "unsupported Mac" warnings:
+        - Verify RestrictEvents.kext is loaded: kextstat | grep RestrictEvents
+        - Verify revpatch=sbvmm is in boot-args (not just NVRAM revpatch var)
+        - Update RestrictEvents.kext to latest release
+
+
+================================================================================
+  PART 3: POST-INSTALL VERIFICATION
+================================================================================
+
+  OS VERSION VERIFICATION
+  --------------------------------------------------------------------------
+  [ ] Confirm macOS version:
+        sw_vers
+        Expected:
+          ProductName:        macOS
+          ProductVersion:     15.x.x
+          BuildVersion:       24xxxxx
+  [ ] Confirm Sequoia branding:
+        system_profiler SPSoftwareDataType | grep "System Version"
+        Expected: macOS 15.x.x (24xxxxx)
+
+  CPU VERIFICATION
+  --------------------------------------------------------------------------
+  [ ] Check CPU is recognized:
+        sysctl -n machdep.cpu.brand_string
+        Expected: Intel(R) Xeon(R) E-2136 Processor @ 3.30GHz
+
+  [ ] Verify all cores/threads:
+        sysctl -n hw.ncpu
+        Expected: 12 (6 cores x 2 hyperthreads)
+
+  [ ] Check CPU frequency stepping:
+        sysctl -a | grep cpufreq
+        (Should show variable frequencies, not stuck at one value)
+
+  GPU VERIFICATION
+  --------------------------------------------------------------------------
+  [ ] Check GPU is recognized with full acceleration:
+        system_profiler SPDisplaysDataType
+        Expected:
+          Chipset Model: AMD Radeon RX 5700 XT
+          VRAM: 8 GB
+          Metal: Supported, feature set macOS GPUFamily2 v1
+
+  [ ] Verify Metal support:
+        system_profiler SPDisplaysDataType | grep Metal
+
+  [ ] Verify Metal 3 compatibility:
+        NOTE: Metal 3 is Apple Silicon only. RX 5700 XT supports Metal and
+        Metal Performance Shaders (MPS) but NOT Metal 3. This is expected.
+        Metal feature set macOS GPUFamily2 v1 is the correct output for Navi.
+
+  AUDIO VERIFICATION
+  --------------------------------------------------------------------------
+  [ ] Check System Settings > Sound > Output
+        (NOTE: Sequoia uses "System Settings" not "System Preferences")
+        Expected: Internal Speakers / Line Out (ALC255/ALC3234)
+  [ ] Test audio playback
+  [ ] Check audio codec loaded:
+        kextstat | grep AppleALC
+        (Should show com.apple.driver.AppleALCU or similar)
+  [ ] Check available audio devices:
+        system_profiler SPAudioDataType
+
+  USB VERIFICATION
+  --------------------------------------------------------------------------
+  [ ] List all USB devices and ports:
+        system_profiler SPUSBDataType
+  [ ] Test each physical USB port with a device:
+        - Front USB 2.0 ports
+        - Front USB 3.0 ports
+        - Rear USB 2.0 ports
+        - Rear USB 3.0 ports
+        - USB-C port (if present)
+  [ ] Verify USB 3.0 speeds:
+        system_profiler SPUSBDataType | grep Speed
+        (USB 3.0 devices should show "Up to 5 Gb/s")
+
+  ETHERNET VERIFICATION
+  --------------------------------------------------------------------------
+  [ ] Check network interface:
+        networksetup -listallhardwareports
+        Expected: Hardware Port: Ethernet
+                  Device: en0
+  [ ] Verify connection:
+        ifconfig en0 | grep inet
+  [ ] Check driver loaded:
+        kextstat | grep -i mausi
+        Expected: as.vit9696.IntelMausi
+
+  WIFI VERIFICATION (if applicable - requires compatible card)
+  --------------------------------------------------------------------------
+  [ ] SEQUOIA WIFI WARNING:
+        Sequoia has REMOVED native support for many Broadcom WiFi chipsets
+        that worked in Ventura/Sonoma. If you have a Broadcom BCM94360CD,
+        BCM94352Z, or similar, you will likely need:
+        - OpenCore Legacy Patcher (OCLP) WiFi patches, OR
+        - IOSkywalkFamily and related kext patches
+        - See Part 6 Troubleshooting for details
+  [ ] Check WiFi status:
+        /System/Library/PrivateFrameworks/Apple80211.framework/\
+        Versions/Current/Resources/airport -I
+  [ ] Verify interface:
+        networksetup -listallhardwareports | grep -A2 Wi-Fi
+  [ ] If WiFi not working, check Part 6 for Sequoia-specific fixes
+
+  NVMe / STORAGE VERIFICATION
+  --------------------------------------------------------------------------
+  [ ] List all disks:
+        diskutil list
+  [ ] Check TRIM support:
+        system_profiler SPNVMeDataType | grep TRIM
+        Expected: TRIM Support: Yes
+  [ ] If TRIM not enabled:
+        sudo trimforce enable
+  [ ] Check NVMe details:
+        system_profiler SPNVMeDataType
+
+  SLEEP / POWER VERIFICATION
+  --------------------------------------------------------------------------
+  [ ] Check power management settings:
+        pmset -g
+        Expected: hibernatemode = 0, standby = 0
+
+  [ ] Check sleep capability:
+        pmset -g capabilities
+
+  NVRAM VERIFICATION
+  --------------------------------------------------------------------------
+  [ ] Verify NVRAM is working (CRITICAL for Sequoia):
+        nvram -p
+        (Should show boot-args and other variables)
+  [ ] Test NVRAM write persistence:
+        sudo nvram TestVar=HelloWorld
+        (Reboot, then check: nvram TestVar - should return HelloWorld)
+        sudo nvram -d TestVar   (cleanup)
+
+  RESTRICT EVENTS VERIFICATION (Sequoia-specific)
+  --------------------------------------------------------------------------
+  [ ] Verify RestrictEvents.kext is loaded:
+        kextstat | grep RestrictEvents
+        Expected: xx.vit9696.RestrictEvents (version 1.x.x)
+  [ ] Verify no "unsupported Mac" warnings in System Settings
+  [ ] Verify Software Update works and shows Sequoia updates
+  [ ] Check revpatch is applied:
+        nvram boot-args
+        (Should contain revpatch=sbvmm)
+  [ ] If warnings persist, check RestrictEvents version is 1.1.4+
+
+  POWER MANAGEMENT / CPU FREQUENCY
+  --------------------------------------------------------------------------
+  [ ] Check CPU frequency states:
+        sysctl -a | grep cpufreq
+  [ ] Verify SpeedStep/power management:
+        sysctl -n hw.cpufrequency_min
+        sysctl -n hw.cpufrequency_max
+        Expected min: ~800MHz, Expected max: ~4500MHz (turbo)
+
+
+================================================================================
+  PART 4: SLEEP/WAKE OPTIMIZATION
+================================================================================
+
+  PMSET CONFIGURATION (run all commands)
+  --------------------------------------------------------------------------
+  [ ] sudo pmset -a hibernatemode 0
+        (Plain sleep only, no hibernate - prevents sleep issues with hackintosh)
+
+  [ ] sudo pmset -a proximitywake 0
+        (Disable wake when iPhone/Apple Watch is near)
+
+  [ ] sudo pmset -a standby 0
+        (Disable standby/deep sleep - problematic on hackintosh)
+
+  [ ] sudo pmset -a powernap 0
+        (Disable Power Nap - causes random wakes)
+
+  [ ] sudo pmset -a tcpkeepalive 0
+        (Disable TCP keepalive during sleep - prevents network wakes)
+
+  [ ] sudo pmset -a womp 0
+        (Disable Wake on LAN - matches BIOS setting)
+
+  [ ] sudo pmset -a autopoweroff 0
+        (Disable auto power off)
+
+  [ ] sudo pmset -a ttyskeepawake 0
+        (Prevent remote sessions from preventing sleep)
+
+  [ ] sudo pmset -a disksleep 10
+        (Spin down disks after 10 minutes)
+
+  [ ] sudo pmset -a sleep 10
+        (System sleep after 10 minutes - adjust to preference)
+
+  [ ] sudo pmset -a displaysleep 5
+        (Display sleep after 5 minutes - adjust to preference)
+
+  SEQUOIA-SPECIFIC SLEEP SETTINGS
+  --------------------------------------------------------------------------
+  [ ] sudo pmset -a sleep 1
+        NOTE: Sequoia changed default sleep behavior. Setting sleep=1 ensures
+        the system is allowed to enter sleep. If set to 0, Sequoia may ignore
+        displaysleep entirely. Set to 1 (minimum) then use displaysleep to
+        control when the display turns off. Adjust sleep to your preference
+        (e.g., sleep 10 for 10-minute delay after display sleeps).
+
+  [ ] Sequoia darkwake changes:
+        Sequoia has revised darkwake handling. The default darkwake value
+        has changed. If you experience issues with Dark Wake (system wakes
+        partially but screen stays off), try these in order:
+        - darkwake=0    (disables Dark Wake entirely - recommended start)
+        - darkwake=1    (basic Dark Wake, no network activity)
+        - darkwake=8    (allows scheduled tasks during Dark Wake)
+        Set in config.plist boot-args and reboot to test each.
+
+  [ ] Sequoia may reset pmset values after updates. After any macOS update:
+        pmset -g
+        Re-run the commands above if values have been reset to defaults.
+
+  VERIFY SETTINGS
+  --------------------------------------------------------------------------
+  [ ] pmset -g
+        Confirm all values match above
+
+  [ ] Delete sleep image to reclaim space:
+        sudo rm -f /var/vm/sleepimage
+        sudo mkdir /var/vm/sleepimage
+        (Creates directory to prevent recreation)
+
+  SLEEP TEST
+  --------------------------------------------------------------------------
+  [ ] Test sleep manually:
+        pmset sleepnow
+
+  [ ] After waking, check wake reason:
+        log show --last 1d --predicate 'eventMessage contains "Wake reason"' \
+          --style syslog | tail -5
+
+  [ ] Alternative wake reason check:
+        pmset -g log | grep -E "Wake from|Dark Wake" | tail -10
+
+  COMMON DELL 3630 WAKE ISSUES
+  --------------------------------------------------------------------------
+  Issue: Instant wake after sleep
+    Fix: [ ] Verify SSDT-GPRW.aml is loaded (patches _PRW wake sources)
+         [ ] Check: pmset -g log | grep "Wake reason"
+         [ ] If "GLAN" (LAN wake): Disable WoL in BIOS + womp 0
+         [ ] If "XDCI" or "XHC": USB device keeping system awake
+              - Unplug USB devices one-by-one to isolate
+              - Or: sudo pmset -a disablesleep 0
+         [ ] If "RTC" (alarm): check for scheduled wakes
+              sudo pmset -g sched
+
+  Issue: Dark Wake (fans spin but screen stays off)
+    Fix: [ ] Add darkwake=0 to boot-args in config.plist
+         [ ] Or try darkwake=1, darkwake=2, darkwake=8 (test each)
+         [ ] Sequoia note: darkwake=0 is the safest starting point
+
+  Issue: System hangs on wake (black screen, must force restart)
+    Fix: [ ] Verify WhateverGreen agdpmod=pikera is set
+         [ ] Try adding igfxonln=1 to boot-args
+         [ ] Check GPU is not in D3 state before sleep
+
+
+================================================================================
+  PART 5: PERFORMANCE TUNING
+================================================================================
+
+  GEEKBENCH EXPECTED SCORES (Xeon E-2136)
+  --------------------------------------------------------------------------
+  [ ] Single-Core: ~1100-1200 (Geekbench 5) / ~1700-1850 (Geekbench 6)
+  [ ] Multi-Core:  ~5800-6500 (Geekbench 5) / ~8500-9500 (Geekbench 6)
+  NOTE: Scores within 5-10% of bare metal indicate proper power management.
+        Significantly lower = check CPU frequency stepping and C-states.
+        Sequoia itself should not impact benchmark scores vs Ventura/Sonoma.
+
+  CPU POWER MANAGEMENT
+  --------------------------------------------------------------------------
+  [ ] Install monitoring tools:
+        NOTE: Intel Power Gadget has been discontinued. Use alternatives:
+        - HWMonitor (free) from CPUID
+        - iStatMenus (paid) for menubar monitoring
+        - Terminal: sudo powermetrics --samplers cpu_power -n 1
+
+  [ ] Verify frequency stepping:
+        - Idle: should drop to ~800MHz-1.3GHz
+        - Load: should boost to 4.5GHz (single) / 4.1GHz (all-core)
+        - Run: yes > /dev/null &   (then check frequency)
+        - Kill: killall yes
+
+  [ ] Verify XCPM (Xnu CPU Power Management) is active:
+        sysctl kern.hv_vmm_present
+        (Should return 0 on physical hardware)
+
+  [ ] CPUFriend tuning (optional, for better performance balance):
+        - Use CPUFriendFriend to generate custom frequency data
+        - Adjust LFM (Low Frequency Mode) and EPP (Energy Performance Preference)
+
+  GPU METAL BENCHMARK (RX 5700 XT)
+  --------------------------------------------------------------------------
+  [ ] Geekbench Metal Score: ~42000-48000 (Geekbench 5)
+  [ ] Geekbench Metal Score: ~85000-95000 (Geekbench 6)
+  [ ] Run Unigine Valley or Heaven for stress test
+  [ ] Verify full VRAM recognized:
+        system_profiler SPDisplaysDataType | grep VRAM
+        Expected: 8192 MB (8 GB)
+  [ ] Check OpenCL:
+        system_profiler SPDisplaysDataType | grep OpenCL
+
+  SEQUOIA GAME MODE
+  --------------------------------------------------------------------------
+  [ ] Sequoia 15 introduces Game Mode for macOS:
+        - Automatically activates when a full-screen game is detected
+        - Prioritizes GPU and CPU resources for the game
+        - Reduces Bluetooth latency for controllers and AirPods
+        - Doubles the Bluetooth sampling rate for game controllers
+  [ ] Verify Game Mode activates:
+        - Launch any full-screen game or 3D application
+        - A notification "Game Mode On" should appear briefly
+        - Check Activity Monitor > Energy for "Game Mode" indication
+  [ ] NOTE: Game Mode works with Metal-compatible GPUs including RX 5700 XT
+        No additional configuration required.
+
+  METAL SUPPORT CHECK
+  --------------------------------------------------------------------------
+  [ ] Verify Metal feature set:
+        system_profiler SPDisplaysDataType | grep -A5 Metal
+        Expected for RX 5700 XT:
+          Metal: Supported, feature set macOS GPUFamily2 v1
+          Metal: GPU Family: macOS GPUFamily2 v1
+  [ ] NOTE: Metal 3 is exclusive to Apple Silicon (M3 and later).
+        RX 5700 XT supports Metal and Metal Performance Shaders.
+        All Metal-based applications and games will work correctly.
+        Core ML acceleration via Metal is fully functional.
+
+  USB POWER DELIVERY
+  --------------------------------------------------------------------------
+  [ ] Verify USB power properties (SSDT-USBX):
+        ioreg -l | grep -A10 AppleUSBHostResources
+        Expected values:
+          kUSBSleepPortCurrentLimit = 2100
+          kUSBSleepPowerSupply      = 5100
+          kUSBWakePortCurrentLimit  = 2100
+          kUSBWakePowerSupply       = 5100
+
+  [ ] Test USB device charging (phone/tablet should charge at normal speed)
+
+  DISK PERFORMANCE
+  --------------------------------------------------------------------------
+  [ ] Run Blackmagic Disk Speed Test or AmorphousDiskMark
+        NVMe Expected: Read ~2500-3500 MB/s, Write ~2000-3000 MB/s
+        (Varies by NVMe model)
+
+  [ ] Verify NVMeFix is working:
+        kextstat | grep NVMeFix
+        (Improves NVMe power management and autonomous TRIM)
+
+  MEMORY
+  --------------------------------------------------------------------------
+  [ ] Verify all RAM detected:
+        system_profiler SPMemoryDataType
+        sysctl -n hw.memsize | awk '{print $1/1073741824 " GB"}'
+
+  [ ] Check memory speed:
+        system_profiler SPMemoryDataType | grep Speed
+
+
+================================================================================
+  PART 6: TROUBLESHOOTING
+================================================================================
+
+  SEQUOIA "UNSUPPORTED MAC" WARNING
+  --------------------------------------------------------------------------
+  Symptom: "This Mac is not supported" warning during installation or in
+           System Settings. Software Update refuses to show Sequoia updates.
+  Cause:   iMacPro1,1 is not in Apple's supported model list for Sequoia 15.
+  Fixes:
+  [ ] Ensure RestrictEvents.kext is in EFI/OC/Kexts/ and enabled in config.plist
+  [ ] Add revpatch=sbvmm to boot-args in config.plist:
+        NVRAM > Add > 7C436110... > boot-args:
+        -v agdpmod=pikera revpatch=sbvmm alcid=11 ...
+  [ ] revpatch=sbvmm tells RestrictEvents to spoof the Software Update
+        Board Model Validation check. Without this, Sequoia blocks updates.
+  [ ] Verify after boot:
+        kextstat | grep RestrictEvents   (must be loaded)
+        nvram boot-args                  (must contain revpatch=sbvmm)
+  [ ] If still blocked, also try setting revpatch NVRAM variable:
+        sudo nvram revpatch=sbvmm
+  [ ] Minimum RestrictEvents version for Sequoia: 1.1.4+
+        Download latest from: https://github.com/acidanthera/RestrictEvents
+
+  SEQUOIA AMFI / SIP ISSUES
+  --------------------------------------------------------------------------
+  Symptom: Third-party kexts fail to load, AMFI policy violations in logs,
+           or "kernel extension is not from an identified developer" errors.
+  Cause:   Sequoia 15 tightened AMFI (Apple Mobile File Integrity) enforcement.
+  Fixes:
+  [ ] Set csr-active-config to 03080000 in config.plist:
+        NVRAM > Add > 7C436110-AB2A-4BBB-A880-FE41995C9F82:
+        csr-active-config = 03080000
+        (This disables SIP + AMFI enforcement sufficiently for hackintosh)
+  [ ] Breakdown of 03080000:
+        - Disables: kext signing, filesystem protections, AMFI
+        - Preserves: NVRAM protections, DTrace restrictions
+  [ ] Alternative: if 03080000 is insufficient, try:
+        csr-active-config = 030A0000  (also disables Apple Internal)
+        csr-active-config = 67080000  (full SIP disable - use as last resort)
+  [ ] After setting, verify SIP status:
+        csrutil status
+        Expected: System Integrity Protection status: disabled
+        Or: System Integrity Protection status: unknown (custom policy)
+  [ ] If individual kexts still fail, add -lilubetaall to boot-args
+        (Forces Lilu and all plugins to load regardless of OS version check)
+
+  SEQUOIA WIFI / BROADCOM ISSUES
+  --------------------------------------------------------------------------
+  Symptom: WiFi stopped working after upgrading to Sequoia (worked in Ventura
+           or Sonoma). Airport card not detected.
+  Cause:   Apple removed legacy Broadcom WiFi drivers in Sequoia 15. BCM94360,
+           BCM94352, BCM943602, and similar chipsets are no longer natively
+           supported.
+  Fixes:
+  [ ] Option A - OpenCore Legacy Patcher (OCLP) WiFi Patches:
+        1. Download OCLP from: https://github.com/dortania/OpenCore-Legacy-Patcher
+        2. Run OCLP > Post-Install Root Patch > Apply Networking Patches
+        3. This injects the legacy IOSkywalkFamily and WiFi kexts
+        4. Must re-apply after every Sequoia update
+        5. Requires SIP partially disabled (csr-active-config 03080000)
+  [ ] Option B - Manual Kext Injection:
+        1. Extract IO80211FamilyLegacy.kext from macOS Sonoma
+        2. Add IOSkywalkFamily blocker in config.plist Kernel > Block
+        3. Inject legacy WiFi kexts via OpenCore
+        4. This is fragile and may break with updates
+  [ ] Option C - Replace WiFi Card:
+        - Intel AX200/AX201/AX210 with itlwm.kext + HeliPort app
+        - Fenvi T919 (BCM94360CD) may still work with OCLP patches
+        - Intel cards are the most reliable option for Sequoia
+  [ ] Verify WiFi after fix:
+        networksetup -listallhardwareports | grep -A2 Wi-Fi
+        airport -I  (should show connected SSID and signal strength)
+
+  BLACK SCREEN ON BOOT
+  --------------------------------------------------------------------------
+  Symptom: Boot appears to proceed but display stays black
+  Fixes:
+  [ ] Verify agdpmod=pikera is in boot-args (config.plist)
+        (Disables board-id check on Navi GPUs - ESSENTIAL for RX 5700 XT)
+  [ ] Try different display port (HDMI vs DisplayPort)
+  [ ] Wait 2-3 minutes - first boot can be slow with Navi GPUs
+  [ ] Add -v (verbose) to boot-args to see where it stops
+  [ ] If stuck at "[EB|#LOG:EXITBS:START]": GPU handoff issue
+        - Ensure WhateverGreen.kext is loaded
+        - Try adding unfairgva=1 to boot-args
+  [ ] If black screen after Apple logo: add -igfxvesa to boot-args (test only)
+
+  NO AUDIO / AUDIO ISSUES
+  --------------------------------------------------------------------------
+  Symptom: No sound output devices visible
+  Fixes:
+  [ ] Verify AppleALC.kext is loaded: kextstat | grep AppleALC
+  [ ] Current layout-id in config.plist: check alcid=XX in boot-args
+        or DeviceProperties > PciRoot audio > layout-id
+  [ ] Try different alcid values for ALC255/ALC3234:
+        alcid=3   (common for Dell)
+        alcid=11
+        alcid=13
+        alcid=17
+        alcid=27
+        alcid=28
+  [ ] To test without rebooting (temporary):
+        nvram boot-args="... alcid=11"  (then reboot)
+  [ ] Check codec is detected:
+        ioreg -l | grep -i "IOHDACodecDevice"
+  [ ] If no codec detected:
+        - Verify audio enabled in BIOS
+        - Check DeviceProperties has correct PCI path for audio controller
+
+  INSTANT WAKE FROM SLEEP
+  --------------------------------------------------------------------------
+  Symptom: System wakes immediately after sleeping
+  Fixes:
+  [ ] Identify wake reason:
+        pmset -g log | grep "Wake reason" | tail -5
+        log show --last 6h --predicate 'eventMessage contains "Wake reason"'
+  [ ] Common wake reasons and fixes:
+        "GLAN": [ ] Disable Wake on LAN in BIOS
+                 [ ] sudo pmset -a womp 0
+        "XHC" / "XDCI":
+                 [ ] Verify SSDT-GPRW.aml patches are working
+                 [ ] Try unplugging USB devices
+                 [ ] Check for USB Bluetooth adapter causing wakes
+        "RTC":   [ ] Check scheduled wakes: pmset -g sched
+                 [ ] sudo pmset schedule cancelall
+        "EC":    [ ] Check for lid/button events
+                 [ ] Verify EC SSDT patches
+  [ ] Nuclear option (identify all wake-capable devices):
+        cat /proc/acpi/wakeup   (if available)
+        Or check: pmset -g assertions
+
+  KERNEL PANIC
+  --------------------------------------------------------------------------
+  Symptom: System crashes with kernel panic screen or instant reboot
+  Fixes:
+  [ ] Enable debug boot-args in config.plist:
+        boot-args: -v debug=0x100 keepsyms=1
+        -v          = verbose boot (see all messages)
+        debug=0x100 = stop on panic (don't auto-reboot)
+        keepsyms=1  = show symbol names in panic log
+  [ ] After panic, check log:
+        /Library/Logs/DiagnosticReports/
+        Look for files matching: kernel_*.panic
+  [ ] Common panics:
+        "AppleIntelCPUPowerManagement":
+          [ ] CFG Lock is still enabled - unlock or enable AppleXcpmCfgLock
+        "Couldn't alloc class IOPlatformPluginDevice":
+          [ ] SSDT-PLUG.aml missing or incorrect
+        "panic: userspace watchdog timeout":
+          [ ] GPU issue - check WhateverGreen and boot-args
+        "AMDRadeonX6000" crash:
+          [ ] Update WhateverGreen to latest version
+          [ ] Ensure no conflicting GPU kexts
+
+  KEXTS NOT LOADING ON SEQUOIA
+  --------------------------------------------------------------------------
+  Symptom: Kexts that worked on Ventura/Sonoma fail to load on Sequoia.
+           Features missing (no audio, no ethernet, no USB, etc.) even though
+           kexts are present in EFI/OC/Kexts/.
+  Fixes:
+  [ ] Add -lilubetaall to boot-args:
+        This forces Lilu and all Lilu-based plugins (WhateverGreen, AppleALC,
+        VirtualSMC, RestrictEvents, etc.) to load even if they don't yet
+        officially recognize the running macOS version. Essential when using
+        kexts that haven't been updated for Sequoia yet.
+  [ ] Verify kexts are loading:
+        kextstat | grep -E "Lilu|AppleALC|WhateverGreen|VirtualSMC"
+        (All should appear in the output)
+  [ ] Update ALL kexts to latest versions:
+        Sequoia may reject older kext versions. Download latest releases from:
+        - https://github.com/acidanthera/Lilu/releases
+        - https://github.com/acidanthera/WhateverGreen/releases
+        - https://github.com/acidanthera/AppleALC/releases
+        - https://github.com/acidanthera/VirtualSMC/releases
+        - https://github.com/acidanthera/RestrictEvents/releases
+  [ ] Check kernel log for kext loading errors:
+        log show --last 5m --predicate 'process == "kernelmanagerd"'
+
+  SECUREBOOTMODEL SETTING FOR SEQUOIA
+  --------------------------------------------------------------------------
+  Symptom: Boot failure, "OCB: Apple Secure Boot prohibits" errors, or
+           installation hangs at Apple logo.
+  Cause:   SecureBootModel validation conflicts with unsigned/modified kexts.
+  Fix:
+  [ ] Set SecureBootModel to Disabled in config.plist:
+        Misc > Security > SecureBootModel = Disabled
+        (NOT "Default" - Sequoia with hackintosh kexts requires this)
+  [ ] This is REQUIRED because:
+        - Hackintosh kexts are not Apple-signed
+        - RestrictEvents patches modify secure boot validation
+        - OCLP WiFi patches (if used) inject unsigned drivers
+  [ ] Do NOT set to "Default" or a specific model (j137, etc.) - these will
+        cause boot failures with modified system files.
+
+  SLOW NVMe PERFORMANCE
+  --------------------------------------------------------------------------
+  Symptom: NVMe speeds much lower than expected
+  Fixes:
+  [ ] Verify NVMeFix.kext is loaded:
+        kextstat | grep NVMeFix
+  [ ] Check TRIM is enabled:
+        system_profiler SPNVMeDataType | grep TRIM
+        If not: sudo trimforce enable
+  [ ] Check for APST (Autonomous Power State Transitions):
+        NVMeFix enables this - verify in ioreg
+  [ ] Some NVMe drives need specific patches:
+        - Samsung 970 EVO Plus: works natively
+        - WD Black SN750/850: works with NVMeFix
+        - Intel 660p/760p: may need SetApfsTrimTimeout quirk
+
+  BOOT STUCK / VERBOSE ERRORS
+  --------------------------------------------------------------------------
+  [ ] "OC: Failed to load vault": Disable Vault in config.plist
+        Misc > Security > Vault = Optional
+  [ ] "OC: No schema": Config.plist has entries from wrong OC version
+        Regenerate with latest OC version tools (1.0.2+ for Sequoia)
+  [ ] "AppleUSBHostPort::createDevice: failed to create device":
+        USB mapping issue - verify USBInjectAll or create USB map kext
+  [ ] "Still waiting for root device":
+        [ ] Wrong SATA mode (check AHCI in BIOS)
+        [ ] Missing NVMe driver
+        [ ] Try different USB port for installer
+  [ ] "Error loading kernel cache":
+        [ ] Rebuild kext cache: sudo kextcache -i /
+        [ ] Verify all kexts are properly signed/unsigned consistently
+  [ ] "Waiting for DSMOS" or DSMOS error:
+        [ ] VirtualSMC.kext not loaded - check kext order in config.plist
+        [ ] Lilu.kext must load before VirtualSMC
+
+
+================================================================================
+  QUICK REFERENCE: BOOT-ARGS
+================================================================================
+
+  Current recommended boot-args for Sequoia 15:
+
+    -v agdpmod=pikera revpatch=sbvmm debug=0x100 keepsyms=1 alcid=11
+
+  Breakdown:
+    -v              Verbose boot (remove once stable)
+    agdpmod=pikera  Navi GPU board-id patch (REQUIRED for RX 5700 XT)
+    revpatch=sbvmm  RestrictEvents patch for Sequoia model validation
+                    (REQUIRED - blocks "unsupported Mac" warnings)
+    debug=0x100     Don't reboot on panic (remove once stable)
+    keepsyms=1      Show symbols in panic (remove once stable)
+    alcid=11        Audio layout ID for ALC255 (try 3, 13, 17, 27, 28)
+
+  If kexts are not loading, add:
+    -lilubetaall    Force all Lilu plugins to load (use during initial setup)
+
+  If darkwake issues:
+    darkwake=0      Disable Dark Wake (try first, then 1, 2, 8)
+
+  Once stable, reduce to:
+    agdpmod=pikera revpatch=sbvmm alcid=11
+
+
+================================================================================
+  QUICK REFERENCE: KEY OPENCORE SETTINGS (config.plist)
+================================================================================
+
+  OpenCore Version:  1.0.2 or newer REQUIRED for macOS Sequoia 15
+
+  ACPI > Add:        All compiled .aml SSDTs listed and enabled
+  Booter > Quirks:   AvoidRuntimeDefrag=YES, EnableSafeModeSlide=YES,
+                     ProvideCustomSlide=YES, SetupVirtualMap=YES
+  Kernel > Quirks:   AppleXcpmCfgLock=YES (if CFG Lock not disabled),
+                     DisableIoMapper=YES (if VT-d enabled in BIOS),
+                     PanicNoKextDump=YES, PowerTimeoutKernelPanic=YES
+  Misc > Security:   AllowSetDefault=YES, ScanPolicy=0,
+                     SecureBootModel=Disabled (REQUIRED for Sequoia),
+                     Vault=Optional
+  NVRAM > boot-args: agdpmod=pikera revpatch=sbvmm alcid=11
+                     (add -v debug=0x100 keepsyms=1 during setup)
+  NVRAM > csr:       csr-active-config=03080000 (SIP+AMFI for Sequoia)
+  PlatformInfo:      iMacPro1,1 with valid SMBIOS data
+                     (RestrictEvents handles Sequoia compatibility)
+  UEFI > APFS:       MinDate=-1, MinVersion=-1 (allow all APFS versions)
+
+
+================================================================================
+  QUICK REFERENCE: SEQUOIA-SPECIFIC REQUIREMENTS SUMMARY
+================================================================================
+
+  These items are NEW or CHANGED compared to Ventura/Sonoma. If upgrading
+  from an older macOS version, ensure all of these are addressed:
+
+  [ ] OpenCore 1.0.2+ ..................... Minimum version for Sequoia
+  [ ] RestrictEvents.kext 1.1.4+ ......... Blocks unsupported model warnings
+  [ ] revpatch=sbvmm in boot-args ........ Required for update/install gating
+  [ ] SecureBootModel=Disabled ............ Required for unsigned kexts
+  [ ] csr-active-config=03080000 .......... Relaxed SIP/AMFI for hackintosh
+  [ ] -lilubetaall (if needed) ............ Forces kext loading on new OS
+  [ ] Broadcom WiFi: OCLP patches ........ If using BCM94360/BCM94352/etc.
+  [ ] darkwake=0 (if sleep issues) ........ Sequoia changed darkwake defaults
+  [ ] All kexts updated to latest ......... Sequoia may reject older versions
+
+
+================================================================================
+  END OF CHECKLIST
+================================================================================

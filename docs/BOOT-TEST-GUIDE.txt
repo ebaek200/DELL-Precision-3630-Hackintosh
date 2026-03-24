@@ -1,0 +1,191 @@
+============================================================
+  Dell Precision 3630 - iMacPro1,1 EFI 부팅 테스트 가이드
+  작성: 2026-03-24
+============================================================
+
+■ 하드웨어
+  CPU:  Intel Xeon E-2136 (Coffee Lake, 6C/12T, 3.3GHz)
+  GPU:  AMD Radeon RX 5700 XT (Navi 10, 8GB)
+  칩셋: Intel C246
+  오디오: Realtek ALC255 (layout-id 12)
+  이더넷: Intel I219-LM
+  NVMe: Samsung MZFLV256 + WD SN530 256GB
+  RAM:  32GB DDR4-2666 (4x8GB)
+
+■ SMBIOS 변경
+  기존: MacPro7,1  →  신규: iMacPro1,1
+  (Xeon + dGPU 전용 = Dell 3630에 최적 매칭)
+
+■ 새 시리얼 정보
+  Serial:  PLACEHOLDER (use GenSMBIOS)
+  MLB:     PLACEHOLDER (use GenSMBIOS)
+  UUID:    PLACEHOLDER (use GenSMBIOS)
+
+
+============================================================
+  1단계: USB 부팅 테스트
+============================================================
+
+1) 재부팅 → Dell 로고에서 F12 (부팅 메뉴)
+2) "UEFI: USB" 또는 USB 디바이스 선택
+3) OpenCore 부팅 피커 → macOS Ventura 선택
+4) 부팅 완료 후 아래 체크리스트 확인
+
+
+============================================================
+  2단계: 부팅 후 체크리스트
+============================================================
+
+□ [기본] 이 Mac에 관하여 → "iMacPro1,1" 표시 확인
+□ [오디오] 시스템 환경설정 → 사운드 → 출력 장치 확인, 소리 재생
+□ [이더넷] 시스템 환경설정 → 네트워크 → 이더넷 연결됨 확인
+□ [GPU] 이 Mac에 관하여 → 그래픽 → "Radeon RX 5700 XT 8GB" 확인
+□ [USB] 전면/후면 USB 포트에 장치 꽂아서 인식 확인
+□ [NVMe] 디스크 유틸리티 → 모든 디스크 인식 확인
+□ [잠자기] Apple 메뉴 → 잠자기 → 5초 후 키보드/마우스로 깨우기
+        → 정상 복귀되는지, 즉시 깨어남 없는지 확인
+□ [CPU] 활성 상태 보기 → CPU 사용률 정상, 코어 6개 인식
+
+
+============================================================
+  3단계: 잠자기 심화 테스트
+============================================================
+
+터미널에서 실행:
+
+  # 잠자기 최적화 설정
+  sudo pmset -a sleep 10
+  sudo pmset -a disksleep 10
+  sudo pmset -a displaysleep 5
+  sudo pmset -a womp 0
+  sudo pmset -a proximitywake 0
+  sudo pmset -a tcpkeepalive 0
+  sudo pmset -a powernap 0
+  sudo pmset -a hibernatemode 0
+  sudo pmset -a standby 0
+  sudo pmset -a autopoweroff 0
+
+  # 설정 확인
+  pmset -g
+
+  # 잠자기 테스트
+  sudo pmset sleepnow
+
+  # 깨어난 후 로그 확인 (즉시깨어남 원인 추적)
+  pmset -g log | grep -i "wake reason" | tail -5
+
+
+============================================================
+  4단계: 문제 없으면 → 내장 EFI 교체
+============================================================
+
+  ※ 이 작업은 반드시 USB 부팅 테스트 성공 후 진행
+
+  1) 내장 EFI 파티션 마운트 (이미 /Volumes/EFI에 있을 수 있음)
+     diskutil mount /dev/disk1s1
+
+  2) 기존 EFI 백업
+     cp -R /Volumes/EFI/EFI /Volumes/EFI/EFI_backup_MacPro71
+
+  3) 기존 EFI 삭제
+     rm -rf /Volumes/EFI/EFI/OC
+     rm -rf /Volumes/EFI/EFI/BOOT
+
+  4) USB EFI에서 내장으로 복사 (USB EFI = /Volumes/EFI\ 1/)
+     cp -R "/Volumes/EFI 1/EFI/BOOT" /Volumes/EFI/EFI/
+     cp -R "/Volumes/EFI 1/EFI/OC" /Volumes/EFI/EFI/
+
+  5) 확인
+     ls /Volumes/EFI/EFI/OC/config.plist
+
+  6) 재부팅 (USB 제거 후 내장으로 부팅)
+
+  7) iCloud 로그아웃 → 재로그인 (시리얼 변경됨)
+
+
+============================================================
+  5단계: iCloud 재설정
+============================================================
+
+  시리얼이 MacPro7,1 → iMacPro1,1로 변경되었으므로:
+  1) 시스템 환경설정 → Apple ID → 로그아웃
+  2) 재부팅
+  3) 다시 로그인
+  4) "이 Mac을 신뢰하시겠습니까?" → 신뢰
+
+
+============================================================
+  트러블슈팅
+============================================================
+
+▶ 부팅 안됨 (검은 화면)
+  - F12로 내장 디스크 선택 → 기존 EFI로 부팅 (안전)
+  - USB 부팅 실패는 내장 EFI에 영향 없음
+
+▶ 오디오 안됨
+  - alcid 변경 시도: boot-args에서 alcid=12 → 11, 13, 17, 27, 28
+  - config.plist → NVRAM → boot-args 수정
+
+▶ 잠자기 즉시 깨어남
+  - 터미널: pmset -g log | grep "wake reason"
+  - XHC (USB) → BIOS에서 USB Wake 비활성
+  - GLAN (LAN) → BIOS에서 Wake on LAN 비활성
+  - RTC → sudo pmset -a womp 0
+
+▶ 이더넷 안됨
+  - IntelMausi.kext가 로드되었는지 확인
+  - 터미널: kextstat | grep -i mausi
+
+▶ 커널 패닉
+  - boot-args에 -v 추가하여 verbose 부팅
+  - config.plist → NVRAM → boot-args:
+    agdpmod=pikera alcid=12 keepsyms=1 debug=0x100 -v
+
+
+============================================================
+  현재 EFI 구성 요약 (기존 대비 변경점)
+============================================================
+
+  [삭제] MaLd0n.aml (Olarila 범용)
+  [삭제] AtherosE2200Ethernet.kext (Dell 3630에 없는 칩)
+  [삭제] RealtekRTL8111.kext (Dell 3630에 없는 칩)
+  [삭제] LucyRTL8125Ethernet.kext (Dell 3630에 없는 칩)
+  [삭제] AppleIGC.kext (Dell 3630에 없는 칩)
+  [삭제] USBInjectAll.kext (레거시)
+  [삭제] XHCI-unsupported.kext (레거시)
+
+  [추가] SSDT-PLUG.aml    — CPU 전원관리
+  [추가] SSDT-EC-USBX.aml — USB 전력
+  [추가] SSDT-PMC.aml     — 네이티브 NVRAM
+  [추가] SSDT-AWAC.aml    — RTC 픽스
+  [추가] SSDT-GPRW.aml    — 잠자기 즉시깨어남 방지 (핵심!)
+  [추가] SSDT-SBUS-MCHC.aml — SMBus/메모리 컨트롤러
+  [추가] USBMap.kext       — Dell 3630 전용 15포트 매핑
+  [추가] GPRW→XPRW ACPI 리네임 패치
+
+  [수정] SMBIOS: MacPro7,1 → iMacPro1,1
+  [수정] boot-args: 불필요 인자 정리
+  [수정] EnableWriteUnprotector: false (RebuildAppleMemoryMap과 배타)
+  [수정] RebuildAppleMemoryMap: true
+  [수정] OpenRuntime.efi: LoadEarly=true
+  [수정] SecureBootModel: Default (Ventura 정상 보안)
+  [수정] csr-active-config: 00000000 (SIP 완전 활성)
+  [수정] SpoofVendor: true
+  [수정] XhciPortLimit: false (USBMap 사용)
+
+  [유지] Lilu, VirtualSMC, SMCProcessor, SMCSuperIO
+  [유지] WhateverGreen, AppleALC, IntelMausi, NVMeFix
+  [유지] RestrictEvents
+  [유지] OpenCore GUI (GoldenGate 테마)
+
+
+============================================================
+  EFI 파일 위치
+============================================================
+
+  USB EFI 파티션:  /Volumes/EFI 1/EFI/
+  내장 EFI 파티션: /Volumes/EFI/EFI/
+  Desktop 백업:    ~/Desktop/EFI-Dell3630-Ventura/EFI/
+  USB 데이터:      /Volumes/dw_key/Hackintosh-EFI/
+
+============================================================
