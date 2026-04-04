@@ -359,36 +359,36 @@ fi
 echo ""
 
 ##############################################################################
-# 9. CryptexFixup.kext (Sequoia - fixes cryptex loading process)
+# 9. AirportBrcmFixup.kext (Sequoia WiFi - Broadcom BCM94360 patches)
 ##############################################################################
 
-log_info "=== CryptexFixup ==="
-CF_URL=$(get_latest_release_url "acidanthera/CryptexFixup" "RELEASE.zip") || true
+log_info "=== AirportBrcmFixup ==="
+ABRF_URL=$(get_latest_release_url "acidanthera/AirportBrcmFixup" "RELEASE.zip") || true
 
-if [ -n "$CF_URL" ]; then
-    if download_and_extract "$CF_URL" "CryptexFixup"; then
-        src=$(find_dir "${TEMP_DIR}/CryptexFixup" "CryptexFixup.kext")
-        copy_kext "$src" "CryptexFixup.kext"
+if [ -n "$ABRF_URL" ]; then
+    if download_and_extract "$ABRF_URL" "AirportBrcmFixup"; then
+        src=$(find_dir "${TEMP_DIR}/AirportBrcmFixup" "AirportBrcmFixup.kext")
+        copy_kext "$src" "AirportBrcmFixup.kext"
     fi
 else
-    log_err "Skipping CryptexFixup (could not resolve URL)"
+    log_err "Skipping AirportBrcmFixup (could not resolve URL)"
 fi
 echo ""
 
 ##############################################################################
-# 10. FeatureUnlock.kext (enables Sidecar, AirPlay, Continuity on Hackintosh)
+# 10. AMFIPass.kext (allows unsigned kext loading for OCLP WiFi kexts)
 ##############################################################################
 
-log_info "=== FeatureUnlock ==="
-FU_URL=$(get_latest_release_url "acidanthera/FeatureUnlock" "RELEASE.zip") || true
+log_info "=== AMFIPass ==="
+AMFI_URL=$(get_latest_release_url "dortania/AMFIPass" "RELEASE.zip") || true
 
-if [ -n "$FU_URL" ]; then
-    if download_and_extract "$FU_URL" "FeatureUnlock"; then
-        src=$(find_dir "${TEMP_DIR}/FeatureUnlock" "FeatureUnlock.kext")
-        copy_kext "$src" "FeatureUnlock.kext"
+if [ -n "$AMFI_URL" ]; then
+    if download_and_extract "$AMFI_URL" "AMFIPass"; then
+        src=$(find_dir "${TEMP_DIR}/AMFIPass" "AMFIPass.kext")
+        copy_kext "$src" "AMFIPass.kext"
     fi
 else
-    log_err "Skipping FeatureUnlock (could not resolve URL)"
+    log_err "Skipping AMFIPass (could not resolve URL)"
 fi
 echo ""
 
@@ -412,6 +412,21 @@ else
     SUMMARY="${SUMMARY}\n  ${RED}[FAIL]${NC} HfsPlus.efi download failed"
     FAILED=$((FAILED + 1))
 fi
+echo ""
+
+##############################################################################
+# NOTE: OCLP WiFi kexts (manual install)
+##############################################################################
+
+log_warn "=== OCLP WiFi Kexts (NOT auto-downloaded) ==="
+log_warn "The following kexts must be extracted manually from OCLP:"
+log_warn "  - IO80211FamilyLegacy.kext (legacy WiFi stack + AirPortBrcmNIC driver)"
+log_warn "  - IOSkywalkFamily.kext (OCLP modified version)"
+log_warn ""
+log_warn "Extract from OCLP Universal-Binaries.dmg (password: password):"
+log_warn "  Mount: hdiutil attach <path>/Universal-Binaries.dmg -stdinpass -nobrowse"
+log_warn "  IO80211FamilyLegacy: Kexts/Wifi/IO80211FamilyLegacy-v1.0.0.zip"
+log_warn "  IOSkywalkFamily:     Kexts/Wifi/IOSkywalkFamily-v1.2.0.zip"
 echo ""
 
 ##############################################################################
